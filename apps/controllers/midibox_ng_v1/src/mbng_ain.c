@@ -44,6 +44,9 @@ s32 MBNG_AIN_Init(u32 mode)
     ain_timeout[i] = 0;
   }
 
+  // this will re-initialize AIN IOs in case they have been hijacked by DIO function
+  MIOS32_AIN_Init(0);
+
   return 0; // no error
 }
 
@@ -204,25 +207,61 @@ s32 MBNG_AIN_HandleAinMode(mbng_event_item_t *item, u16 pin_value, u16 prev_pin_
 
   case MBNG_EVENT_AIN_MODE_PARALLAX: {
     // see also http://www.ucapps.de/midibox/midibox_plus_parallax.gif
-    if( item->flags.value_from_midi ) {
+    if( 1 ) { // should always be active, not only for item->flags.value_from_midi
+      int min = item->min;
+      int max = item->max;
+
+      if( item->min > item->max ) {
+        min = item->max;
+        max = item->min;
+      }
+
+      u8 high_range = (max - min) > 128; // higher ranges require special treatment to give enough increments
+
       int diff = value16 - prev_value16;
       if( diff >= 0 ) { // moved clockwise
 	if( prev_value16 > item->value || value16 < item->value ) { // wrong direction, or target value not reached yet
-	  if( item->min <= item->max ) {
-	    if( (item->max - value16) > 0 ) {
-	      value16 = item->value + ((item->max - item->value) / (item->max - value16));
-	    }
-	  } else {
-	    if( (item->min - value16) > 0 )
-	      value16 = item->value + ((item->min - item->value) / (item->min - value16));
-	  }
-	  return value16; // not taken over
+	  if( !high_range || item->value < value16 ) {
+	    int div = (max - value16);
+	    if( high_range )
+	      div /= (max - min) / 128;
+            if( div < 1 )
+              div = 1;
+            int add = ((max - item->value) / div);
+
+            int new_value16 = item->value + add;
+            value16 = (new_value16 > max) ? max : new_value16;
+          } else {
+            int div = (max - item->value);
+            if( div < 1 )
+              div = 1;
+            int add = ((max - value16) / div);
+
+            int new_value16 = item->value + add;
+            value16 = (new_value16 > max) ? max : new_value16;
+          }
 	}
       } else { // moved counter-clockwise
 	if( prev_value16 < item->value || value16 > item->value ) { // wrong direction, target value not reached yet
-	  if( value16 )
-	    value16 = item->value - (item->value / value16);
-	  return value16; // not taken over
+	  if( !high_range || item->value > value16 ) {
+	    int div = (value16 - min);
+	    if( high_range )
+	      div /= (max - min) / 128;
+            if( div < 1 )
+              div = 1;
+            int sub = ((item->value - min) / div);
+
+            int new_value16 = item->value - sub;
+            value16 = (new_value16 < min) ? min : new_value16;
+          } else {
+            int div = (item->value - min);
+            if( div < 1 )
+              div = 1;
+            int sub = ((value16 - min) / div);
+
+            int new_value16 = item->value - sub;
+            value16 = (new_value16 < min) ? min : new_value16;
+          }
 	}
       }
     }
@@ -290,7 +329,7 @@ s32 MBNG_AIN_NotifyChange(u32 pin, u32 pin_value, u8 no_midi)
   mbng_event_item_t item;
   u32 continue_ix = 0;
   do {
-    if( MBNG_EVENT_ItemSearchByHwId(hw_id, &item, &continue_ix) < 0 ) {
+    if( MBNG_EVENT_ItemSearchByHwId(hw_id, 0, &item, &continue_ix) < 0 ) {
       if( continue_ix )
 	return 0; // ok: at least one event was assigned
       if( !no_midi && debug_verbose_level >= DEBUG_VERBOSE_LEVEL_INFO ) {

@@ -20,11 +20,11 @@
 #define MIOS32_LCD_BOOT_MSG_DELAY 0 // we delay the boot and print a message inside the app
 //                                <---------------------->
 #ifdef MBSEQV4P
-#define MIOS32_LCD_BOOT_MSG_LINE1 "MIDIbox SEQ V4+.096"
+#define MIOS32_LCD_BOOT_MSG_LINE1 "MIDIbox SEQ V4+.097"
 #else
-#define MIOS32_LCD_BOOT_MSG_LINE1 "MIDIbox SEQ V4.096"
+#define MIOS32_LCD_BOOT_MSG_LINE1 "MIDIbox SEQ V4.097"
 #endif
-#define MIOS32_LCD_BOOT_MSG_LINE2 "(C) 2019 T. Klose"
+#define MIOS32_LCD_BOOT_MSG_LINE2 "(C) 2020 T. Klose"
 
 // USB settings
 #ifdef MBSEQV4P
@@ -53,17 +53,18 @@ extern void APP_SendDebugMessage(char *format, ...);
 // to doublecheck memory consumption
 
 #ifdef MBSEQV4P
-# define MIOS32_TASK_HOOKS_STACK_SIZE      2048
-# define UIP_TASK_STACK_SIZE               2048
-# define MIOS32_TASK_MIDI_HOOKS_STACK_SIZE 2048
-# define MIDI_TASK_STACK_SIZE              2048
+# define MIOS32_TASK_HOOKS_STACK_SIZE      2100
+# define UIP_TASK_STACK_SIZE               2100
+# define MIOS32_TASK_MIDI_HOOKS_STACK_SIZE 2100
+# define MIDI_TASK_STACK_SIZE              2100
+# define PERIOD1MS_TASK_STACK_SIZE         2100
 #else
 # define MIOS32_TASK_HOOKS_STACK_SIZE      1000
 # define UIP_TASK_STACK_SIZE               1000
 # define MIOS32_TASK_MIDI_HOOKS_STACK_SIZE 1400
 # define MIDI_TASK_STACK_SIZE              1400
+# define PERIOD1MS_TASK_STACK_SIZE         1400
 #endif
-#define PERIOD1MS_TASK_STACK_SIZE          1400
 #define PERIOD1MS_LOWPRIO_TASK_STACK_SIZE  1400
 
 // only used by idle task
@@ -75,7 +76,7 @@ extern void APP_SendDebugMessage(char *format, ...);
 
 // reserved memory for FreeRTOS pvPortMalloc function
 #ifdef MBSEQV4P
-# define MIOS32_HEAP_SIZE 17*1024
+# define MIOS32_HEAP_SIZE 20*1024
 #else
 # define MIOS32_HEAP_SIZE 13*1024
 #endif
@@ -191,17 +192,13 @@ extern void APP_SendDebugMessage(char *format, ...);
 #define BLM_X_DEBOUNCE_MODE       1
 
 
-// WS2816 LEDs (only supported by STM32F4)
-#if defined(MIOS32_FAMILY_STM32F4xx)
-# define WS2812_NUM_LEDS 64
-#else
-# define WS2812_NUM_LEDS 0
-#endif
-
-// AOUT interface: enable calibration for up to 12 octaves
 #ifdef MBSEQV4P
+// AOUT interface: enable calibration for up to 12 octaves
 #define AOUT_NUM_CALI_POINTS_X 12
 #define AOUT_NUM_CALI_POINTS_Y_INTERVAL (12*0x200)
+
+// and enable up to 32 channels (4 AOUT modules)
+#define AOUT_NUM_CHANNELS 32
 #endif
 
 // BLM_SCALAR master driver: enable this switch if the application supports OSC (based on osc_server module)

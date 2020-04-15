@@ -18,8 +18,8 @@
 // global definitions
 /////////////////////////////////////////////////////////////////////////////
 
-// maximum recursion on forwarded events (max 4 can be chained)
-#define MBNG_EVENT_MAX_FWD_RECURSION 3
+// maximum recursion on forwarded events (max 6 can be chained)
+#define MBNG_EVENT_MAX_FWD_RECURSION 5
 
 
 // event pool assignments (upper part of ID)
@@ -146,6 +146,7 @@ typedef enum {
   MBNG_EVENT_SYSEX_VAR_CHK_START,
   MBNG_EVENT_SYSEX_VAR_CHK,
   MBNG_EVENT_SYSEX_VAR_CHK_INV,
+  MBNG_EVENT_SYSEX_VAR_CHK_ROLAND,
   MBNG_EVENT_SYSEX_VAR_VAL,
   MBNG_EVENT_SYSEX_VAR_VAL_H,
   MBNG_EVENT_SYSEX_VAR_VAL_N1,
@@ -256,6 +257,7 @@ typedef union {
   struct {
     u32 type:4;
     u32 led_matrix_pattern:4; // mbng_event_led_matrix_pattern_t
+    u32 rgbled_pattern:4;
     u32 fwd_to_lcd:1;
     u32 update_lcd:1;
     u32 value_from_midi:1;
@@ -339,8 +341,8 @@ typedef union {
 
   struct {
     u32 condition:4;
-    u32 hw_id:14;
-    u32 value:14;
+    u32 hw_id:16;
+    u32 value:12; // TODO: find way to define a 14bit value
   };
 } mbng_event_cond_t;
 
@@ -424,7 +426,7 @@ extern s32 MBNG_EVENT_PoolNumMapsGet(void);
 extern s32 MBNG_EVENT_PoolSizeGet(void);
 extern s32 MBNG_EVENT_PoolMaxSizeGet(void);
 
-extern s32 MBNG_EVENT_MapAdd(u8 map, mbng_event_map_type_t map_type, u8 *map_values, u8 len);
+extern s32 MBNG_EVENT_MapAdd(u8 map, mbng_event_map_type_t map_type, u8 *map_values, u16 len);
 extern s32 MBNG_EVENT_MapGet(u8 map, mbng_event_map_type_t *map_type, u8 **map_values);
 extern s32 MBNG_EVENT_MapValue(u8 map, u16 value, u16 range, u8 reverse_interpolation);
 extern s32 MBNG_EVENT_MapItemValueInc(u8 map, mbng_event_item_t *item, s32 incrementer, u8 auto_wrap);
@@ -442,8 +444,8 @@ extern s32 MBNG_EVENT_ItemInit(mbng_event_item_t *item, mbng_event_item_id_t id)
 extern s32 MBNG_EVENT_ItemGet(u32 item_ix, mbng_event_item_t *item);
 extern s32 MBNG_EVENT_ItemAdd(mbng_event_item_t *item);
 extern s32 MBNG_EVENT_ItemModify(mbng_event_item_t *item);
-extern s32 MBNG_EVENT_ItemSearchById(mbng_event_item_id_t id, mbng_event_item_t *item, u32 *continue_ix);
-extern s32 MBNG_EVENT_ItemSearchByHwId(mbng_event_item_id_t hw_id, mbng_event_item_t *item, u32 *continue_ix);
+extern s32 MBNG_EVENT_ItemSearchById(mbng_event_item_id_t id, mbng_event_item_id_t id_end_range, mbng_event_item_t *item, u32 *continue_ix);
+extern s32 MBNG_EVENT_ItemSearchByHwId(mbng_event_item_id_t hw_id, mbng_event_item_id_t hw_id_end_range, mbng_event_item_t *item, u32 *continue_ix);
 extern s32 MBNG_EVENT_ItemRetrieveValues(mbng_event_item_id_t *id, s16 *value, u8 *secondary_value, u32 *continue_ix);
 extern s32 MBNG_EVENT_ItemCopyValueToPool(mbng_event_item_t *item);
 extern s32 MBNG_EVENT_ItemSetLock(mbng_event_item_t *item, u8 lock);
@@ -486,6 +488,8 @@ extern const char *MBNG_EVENT_ItemEncSpeedModeStrGet(mbng_event_item_t *item);
 extern mbng_event_enc_speed_mode_t MBNG_EVENT_ItemEncSpeedModeFromStrGet(char *enc_speed_mode);
 extern const char *MBNG_EVENT_ItemLedMatrixPatternStrGet(mbng_event_item_t *item);
 extern mbng_event_led_matrix_pattern_t MBNG_EVENT_ItemLedMatrixPatternFromStrGet(char *led_matrix_pattern);
+extern const char *MBNG_EVENT_ItemRgbLedPatternStrGet(mbng_event_item_t *item);
+extern u8 MBNG_EVENT_ItemRgbLedPatternFromStrGet(char *rgbled_pattern);
 extern const char *MBNG_EVENT_ItemNrpnFormatStrGet(mbng_event_item_t *item);
 extern mbng_event_nrpn_format_t MBNG_EVENT_ItemNrpnFormatFromStrGet(char *nrpn_format);
 extern const char *MBNG_EVENT_ItemSysExVarStrGet(mbng_event_item_t *item, u8 stream_pos);

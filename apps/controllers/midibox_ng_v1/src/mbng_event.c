@@ -98,10 +98,10 @@ typedef struct { // should be dividable by u16
 } mbng_event_pool_item_t;
 
 typedef struct {
-  u8 len;
+  u16 len;
   u8 num;
   mbng_event_map_type_t map_type;
-  u8 data[128]; // data section for value map starts here, it can have up to 128 bytes
+  u8 data[256]; // data section for value map starts here, it can have up to 256 bytes
 } mbng_event_pool_map_t;
 
 
@@ -470,7 +470,7 @@ s32 MBNG_EVENT_PoolMapsPrint(void)
       u8 max_values = 32;
       u8 *map_values = (u8 *)&pool_map->data;
       int j;
-      int len = pool_map->len - 3;
+      int len = pool_map->len - 4;
       if( pool_map->map_type == MBNG_EVENT_MAP_TYPE_HWORD || pool_map->map_type == MBNG_EVENT_MAP_TYPE_HWORDI ) {
 	for(j=0; j<len && j < max_values; j+=2) {
 	  u16 value = *(map_values++);
@@ -533,7 +533,7 @@ s32 MBNG_EVENT_PoolMaxSizeGet(void)
 /////////////////////////////////////////////////////////////////////////////
 //! Adds a map to event pool
 /////////////////////////////////////////////////////////////////////////////
-s32 MBNG_EVENT_MapAdd(u8 map, mbng_event_map_type_t map_type, u8 *map_values, u8 len)
+s32 MBNG_EVENT_MapAdd(u8 map, mbng_event_map_type_t map_type, u8 *map_values, u16 len)
 {
   if( (event_pool_size+len+3) > MBNG_EVENT_POOL_MAX_SIZE )
     return -2; // out of storage 
@@ -542,12 +542,13 @@ s32 MBNG_EVENT_MapAdd(u8 map, mbng_event_map_type_t map_type, u8 *map_values, u8
 
   ++event_pool_num_maps;
   u8 *pool_ptr = (u8 *)&event_pool[event_pool_map_start];
-  *pool_ptr++ = len+3;
+  *pool_ptr++ = (len+4) & 0xff;
+  *pool_ptr++ = (len+4) >> 8;
   *pool_ptr++ = map;
   *pool_ptr++ = map_type;
   memcpy(pool_ptr, (u8 *)map_values, len);
 
-  event_pool_size += len + 3;
+  event_pool_size += len + 4;
 
   return 0; // no error
 }
@@ -565,7 +566,7 @@ s32 MBNG_EVENT_MapGet(u8 map, mbng_event_map_type_t *map_type, u8 **map_values)
       if( pool_map->num == map ) {
 	*map_type = pool_map->map_type;
 	*map_values = (u8 *)&pool_map->data;
-	return pool_map->len - 3;
+	return pool_map->len - 4;
       }
 
       pool_ptr += pool_map->len;
@@ -979,6 +980,7 @@ s32 MBNG_EVENT_ItemInit(mbng_event_item_t *item, mbng_event_item_id_t id)
   item->fwd_id = 0;
   item->fwd_value = 0xffff;
   item->flags.led_matrix_pattern = MBNG_EVENT_LED_MATRIX_PATTERN_1;
+  item->flags.rgbled_pattern = 0;
   item->hw_id  = id;
   item->cond.ALL = 0;
   item->value  = 0;
@@ -1492,11 +1494,11 @@ s32 MBNG_EVENT_ItemModify(mbng_event_item_t *item)
 }
 
 /////////////////////////////////////////////////////////////////////////////
-//! Search an item in event pool based on ID
+//! Search an item in event pool based on ID (optional within a range if id_end_range!= 0)
 //! \returns 0 and copies item into *item if found
 //! \returns -1 if item not found
 /////////////////////////////////////////////////////////////////////////////
-s32 MBNG_EVENT_ItemSearchById(mbng_event_item_id_t id, mbng_event_item_t *item, u32 *continue_ix)
+s32 MBNG_EVENT_ItemSearchById(mbng_event_item_id_t id, mbng_event_item_id_t id_end_range, mbng_event_item_t *item, u32 *continue_ix)
 {
   u8 *pool_ptr = (u8 *)&event_pool[0];
   u32 i = 0;
@@ -1510,7 +1512,8 @@ s32 MBNG_EVENT_ItemSearchById(mbng_event_item_id_t id, mbng_event_item_t *item, 
 
   for(; i<event_pool_num_items; ++i) {
     mbng_event_pool_item_t *pool_item = (mbng_event_pool_item_t *)pool_ptr;
-    if( pool_item->id == id ) {
+    if( (!id_end_range && pool_item->id == id) ||
+        (id_end_range && pool_item->id >= id && pool_item->id <= id_end_range) ) {
       MBNG_EVENT_ItemCopy2User(pool_item, item);
 
       // pass pointer offset to pool item + index of pool item in continue_ix for continued search
@@ -1532,12 +1535,12 @@ s32 MBNG_EVENT_ItemSearchById(mbng_event_item_id_t id, mbng_event_item_t *item, 
 
 
 /////////////////////////////////////////////////////////////////////////////
-//! Search an item in event pool based on the HW ID
+//! Search an item in event pool based on the HW ID (optional within a range if hw_id_end!= 0)
 //! Takes the selected bank into account (means: only an active item will be returned)
 //! \returns 0 and copies item into *item if found
 //! \returns -1 if item not found
 /////////////////////////////////////////////////////////////////////////////
-s32 MBNG_EVENT_ItemSearchByHwId(mbng_event_item_id_t hw_id, mbng_event_item_t *item, u32 *continue_ix)
+s32 MBNG_EVENT_ItemSearchByHwId(mbng_event_item_id_t hw_id, mbng_event_item_id_t hw_id_end_range, mbng_event_item_t *item, u32 *continue_ix)
 {
   u8 *pool_ptr = (u8 *)&event_pool[0];
   u32 i = 0;
@@ -1552,7 +1555,9 @@ s32 MBNG_EVENT_ItemSearchByHwId(mbng_event_item_id_t hw_id, mbng_event_item_t *i
   for(; i<event_pool_num_items; ++i) {
     mbng_event_pool_item_t *pool_item = (mbng_event_pool_item_t *)pool_ptr;
 
-    if( pool_item->flags.active && pool_item->hw_id == hw_id ) {
+    if( pool_item->flags.active &&
+        ((!hw_id_end_range && pool_item->hw_id == hw_id) ||
+         (hw_id_end_range && pool_item->hw_id >= hw_id && pool_item->hw_id <= hw_id_end_range)) ) {
       MBNG_EVENT_ItemCopy2User(pool_item, item);
 
       // pass pointer offset to pool item + index of pool item in continue_ix for continued search
@@ -1723,7 +1728,7 @@ s32 MBNG_EVENT_ItemCheckMatchingCondition(mbng_event_item_t *item)
   if( item->cond.hw_id ) {
     mbng_event_item_t tmp_item;
     u32 continue_ix = 0;
-    if( MBNG_EVENT_ItemSearchById(item->cond.hw_id, &tmp_item, &continue_ix) < 0 ) {
+    if( MBNG_EVENT_ItemSearchById(item->cond.hw_id, 0, &tmp_item, &continue_ix) < 0 ) {
       return 0; // id doesn't exist -> no match
     }
     cmp_value = tmp_item.value;
@@ -1969,6 +1974,7 @@ s32 MBNG_EVENT_ItemPrint(mbng_event_item_t *item, u8 all)
     }
 
     DEBUG_MSG("  - led_matrix_pattern=%s", MBNG_EVENT_ItemLedMatrixPatternStrGet(item));
+    DEBUG_MSG("  - rgbled_pattern=%s", MBNG_EVENT_ItemRgbLedPatternStrGet(item));
     DEBUG_MSG("  - colour=%d", item->flags.colour);
     DEBUG_MSG("  - lcd_pos=%d:%d:%d", item->lcd+1, item->lcd_x+1, item->lcd_y+1);
 
@@ -2238,7 +2244,7 @@ s32 MBNG_EVENT_MidiLearnIt(mbng_event_item_id_t hw_id)
   mbng_event_item_t item;
   // note: currently only assigned to first found item
   u32 continue_ix = 0;
-  if( MBNG_EVENT_ItemSearchByHwId(hw_id, &item, &continue_ix) < 0 ) {
+  if( MBNG_EVENT_ItemSearchByHwId(hw_id, 0, &item, &continue_ix) < 0 ) {
     new_item = 1;
 
     if( debug_verbose_level >= DEBUG_VERBOSE_LEVEL_INFO ) {
@@ -2247,7 +2253,7 @@ s32 MBNG_EVENT_MidiLearnIt(mbng_event_item_id_t hw_id)
 
     mbng_event_item_t tmp_item;
     u32 continue_id_ix = 0;
-    while( MBNG_EVENT_ItemSearchById(id, &tmp_item, &continue_id_ix) >= 0 ) {
+    while( MBNG_EVENT_ItemSearchById(id, 0, &tmp_item, &continue_id_ix) >= 0 ) {
       if( debug_verbose_level >= DEBUG_VERBOSE_LEVEL_INFO ) {
 	DEBUG_MSG("[MIDI_LEARN] id=%s:%d already allocated, trying next one...\n", MBNG_EVENT_ItemControllerStrGet(id), id & 0xfff);
       }
@@ -2470,7 +2476,7 @@ s32 MBNG_EVENT_EventLearnIt(mbng_event_item_t *item, u16 prev_value)
     // search for ID
     mbng_event_item_t meta_item;
     u32 continue_ix = 0;
-    if( MBNG_EVENT_ItemSearchById(event_learn_id, &meta_item, &continue_ix) < 0 ) {
+    if( MBNG_EVENT_ItemSearchById(event_learn_id, 0, &meta_item, &continue_ix) < 0 ) {
       if( debug_verbose_level >= DEBUG_VERBOSE_LEVEL_INFO ) {
 	DEBUG_MSG("[EVENT_LEARN] ERROR: meta item id=%s:%d doesn't exist.\n", MBNG_EVENT_ItemControllerStrGet(event_learn_id), event_learn_id & 0xfff);
       }
@@ -2872,6 +2878,28 @@ mbng_event_led_matrix_pattern_t MBNG_EVENT_ItemLedMatrixPatternFromStrGet(char *
 
 
 /////////////////////////////////////////////////////////////////////////////
+//! for RGBLED Patterns
+/////////////////////////////////////////////////////////////////////////////
+static const char *rgbled_pattern_name[16] = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+const char *MBNG_EVENT_ItemRgbLedPatternStrGet(mbng_event_item_t *item)
+{
+  return rgbled_pattern_name[item->flags.rgbled_pattern];
+}
+
+u8 MBNG_EVENT_ItemRgbLedPatternFromStrGet(char *rgbled_pattern)
+{
+  int i;
+
+  for(i=0; i<16; ++i) {
+    if( strcasecmp(rgbled_pattern, rgbled_pattern_name[i]) == 0 )
+      return i;
+  }
+
+  return 0;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
 //! for (N)RPN format
 /////////////////////////////////////////////////////////////////////////////
 const char *MBNG_EVENT_ItemNrpnFormatStrGet(mbng_event_item_t *item)
@@ -2909,6 +2937,7 @@ const char *MBNG_EVENT_ItemSysExVarStrGet(mbng_event_item_t *item, u8 stream_pos
   case MBNG_EVENT_SYSEX_VAR_CHK_START:  return "chk_start";
   case MBNG_EVENT_SYSEX_VAR_CHK:        return "chk";
   case MBNG_EVENT_SYSEX_VAR_CHK_INV:    return "chk_inv";
+  case MBNG_EVENT_SYSEX_VAR_CHK_ROLAND: return "chk_roland";
   case MBNG_EVENT_SYSEX_VAR_VAL:        return "val";
   case MBNG_EVENT_SYSEX_VAR_VAL_H:      return "val_h";
   case MBNG_EVENT_SYSEX_VAR_VAL_N1:     return "val_n1";
@@ -2935,6 +2964,7 @@ mbng_event_sysex_var_t MBNG_EVENT_ItemSysExVarFromStrGet(char *sysex_var)
   if( strcasecmp(sysex_var, "chk_start") == 0 )  return MBNG_EVENT_SYSEX_VAR_CHK_START;
   if( strcasecmp(sysex_var, "chk") == 0 )        return MBNG_EVENT_SYSEX_VAR_CHK;
   if( strcasecmp(sysex_var, "chk_inv") == 0 )    return MBNG_EVENT_SYSEX_VAR_CHK_INV;
+  if( strcasecmp(sysex_var, "chk_roland") == 0 ) return MBNG_EVENT_SYSEX_VAR_CHK_ROLAND;
   if( strcasecmp(sysex_var, "val") == 0 || strcasecmp(sysex_var, "value") == 0 ) return MBNG_EVENT_SYSEX_VAR_VAL;
   if( strcasecmp(sysex_var, "val_h") == 0 )      return MBNG_EVENT_SYSEX_VAR_VAL_H;
   if( strcasecmp(sysex_var, "val_n1") == 0 )     return MBNG_EVENT_SYSEX_VAR_VAL_N1;
@@ -3307,6 +3337,7 @@ s32 MBNG_EVENT_SendSysExStream(mios32_midi_port_t port, mbng_event_item_t *item)
       case MBNG_EVENT_SYSEX_VAR_CHK_START:  chk = 0; break;
       case MBNG_EVENT_SYSEX_VAR_CHK:        MBNG_EVENT_ADD_STREAM(chk & 0x7f); break;
       case MBNG_EVENT_SYSEX_VAR_CHK_INV:    MBNG_EVENT_ADD_STREAM((chk ^ 0x7f) & 0x7f); break;
+      case MBNG_EVENT_SYSEX_VAR_CHK_ROLAND: MBNG_EVENT_ADD_STREAM((128 - (chk & 0x7f)) & 0x7f); break;
       case MBNG_EVENT_SYSEX_VAR_VAL:        MBNG_EVENT_ADD_STREAM(item_value & 0x7f); break;
       case MBNG_EVENT_SYSEX_VAR_VAL_H:      MBNG_EVENT_ADD_STREAM((item_value >>  7) & 0x7f); break;
       case MBNG_EVENT_SYSEX_VAR_VAL_N1:     MBNG_EVENT_ADD_STREAM((item_value >>  0) & 0xf); break;
@@ -3331,6 +3362,15 @@ s32 MBNG_EVENT_SendSysExStream(mios32_midi_port_t port, mbng_event_item_t *item)
       default: {}
       }
     } else {
+      if( (*stream & 0xf0) == 0xb0 ) {
+        // invalidate NRPN optimizer to ensure that it doesn't conflict...
+        u8 chn = *stream & 0x0f;
+        int i;
+        for(i=0; i<MBNG_EVENT_NRPN_SEND_PORTS; ++i) {
+          nrpn_sent_address[i][chn] = 0xffff; // invalidate
+          nrpn_sent_value[i][chn] = 0xffff; // invalidate
+        }
+      }
       MBNG_EVENT_ADD_STREAM(*stream_in++);
     }
   }
@@ -3520,7 +3560,7 @@ s32 MBNG_EVENT_ExecMeta(mbng_event_item_t *item)
       // search for items with matching ID
       mbng_event_item_t remote_item;
       u32 continue_ix = 0;
-      while( MBNG_EVENT_ItemSearchById(remote_id, &remote_item, &continue_ix) >= 0 ) {
+      while( MBNG_EVENT_ItemSearchById(remote_id, 0, &remote_item, &continue_ix) >= 0 ) {
 
 	// scale value between min/max
 	// TODO: handle mapped values properly
@@ -4103,7 +4143,7 @@ s32 MBNG_EVENT_ItemForward(mbng_event_item_t *item)
   if( !item->fwd_id )
     return -1; // no forwarding enabled
 
-  if( item->fwd_id == item->id )
+  if( item->fwd_id == item->hw_id )
     return -2; // avoid feedback
 
   if( recursion_ctr >= MBNG_EVENT_MAX_FWD_RECURSION )
@@ -4115,7 +4155,7 @@ s32 MBNG_EVENT_ItemForward(mbng_event_item_t *item)
   u32 continue_ix = 0;
   u32 num_forwarded = 0;
   do {
-    if( MBNG_EVENT_ItemSearchByHwId(item->fwd_id, &fwd_item, &continue_ix) < 0 ) {
+    if( MBNG_EVENT_ItemSearchByHwId(item->fwd_id, 0, &fwd_item, &continue_ix) < 0 ) {
       break;
     } else {
       ++num_forwarded;
@@ -4786,6 +4826,7 @@ s32 MBNG_EVENT_ReceiveSysEx(mios32_midi_port_t port, u8 midi_in)
 	u8 *stream = ((u8 *)&pool_item->data_begin) + pool_item->sysex_runtime_var.match_ctr;
 	u8 again = 0;
 	do {
+	  again = 0;
 	  if( *stream == 0xff ) { // SysEx variable
 	    u8 match = 0;
 	    switch( *++stream ) {
@@ -4794,9 +4835,10 @@ s32 MBNG_EVENT_ReceiveSysEx(mios32_midi_port_t port, u8 midi_in)
 	    case MBNG_EVENT_SYSEX_VAR_BNK:        match = midi_in == mbng_patch_cfg.sysex_bnk; break;
 	    case MBNG_EVENT_SYSEX_VAR_INS:        match = midi_in == mbng_patch_cfg.sysex_ins; break;
 	    case MBNG_EVENT_SYSEX_VAR_CHN:        match = midi_in == mbng_patch_cfg.sysex_chn; break;
-	    case MBNG_EVENT_SYSEX_VAR_CHK_START:  match = 1; again = 1; break;
+	    case MBNG_EVENT_SYSEX_VAR_CHK_START:  match = 1; again = 1; ++stream; break;
 	    case MBNG_EVENT_SYSEX_VAR_CHK:        match = 1; break; // ignore checksum
 	    case MBNG_EVENT_SYSEX_VAR_CHK_INV:    match = 1; break; // ignore checksum
+	    case MBNG_EVENT_SYSEX_VAR_CHK_ROLAND: match = 1; break; // ignore checksum
 	    case MBNG_EVENT_SYSEX_VAR_VAL:        match = 1; pool_item->value = (pool_item->value & 0xff80) | (midi_in & 0x7f); break;
 	    case MBNG_EVENT_SYSEX_VAR_VAL_H:      match = 1; pool_item->value = (pool_item->value & 0xf07f) | (((u16)midi_in & 0x7f) << 7); break;
 	    case MBNG_EVENT_SYSEX_VAR_VAL_N1:     match = 1; pool_item->value = (pool_item->value & 0xfff0) | (((u16)midi_in <<  0) & 0x000f); break;
@@ -4904,7 +4946,7 @@ s32 MBNG_EVENT_ReceiveSysEx(mios32_midi_port_t port, u8 midi_in)
 	  } else if( *stream == midi_in ) { // matching byte
 	    // begin of stream?
 	    if( midi_in == 0xf0 ) {
-	      pool_item->value = 0;
+	      //pool_item->value = 0; // TK: why did I clear the value here? This overwrites all values of events which are listening to SysEx streams!
 	      pool_item->sysex_runtime_var.ALL = 0;
 	    }
 
@@ -4925,8 +4967,6 @@ s32 MBNG_EVENT_ReceiveSysEx(mios32_midi_port_t port, u8 midi_in)
 
 	  // end of parse stream reached?
 	  if( pool_item->sysex_runtime_var.match_ctr == pool_item->len_stream ) {
-	    again = 0;
-
 	    pool_item->sysex_runtime_var.ALL = 0;
 
 	    // all values matching!
@@ -4934,6 +4974,7 @@ s32 MBNG_EVENT_ReceiveSysEx(mios32_midi_port_t port, u8 midi_in)
 	    MBNG_EVENT_ItemCopy2User(pool_item, &item);
 	    MBNG_EVENT_ItemReceive(&item, pool_item->value, 1, 1);
 	  }
+	  //DEBUG_MSG("id=%d IN=0x%02x ctr=%d\n", pool_item->id, midi_in, pool_item->sysex_runtime_var.match_ctr);
 	} while( again );
       }
     }

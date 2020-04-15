@@ -148,6 +148,7 @@
 /////////////////////////////////////////////////////////////////////////////
 
 #include <mios32.h>
+#if !defined(MIOS32_DONT_USE_AOUT)
 #include <string.h>
 
 #include "aout.h"
@@ -166,6 +167,9 @@ typedef struct {
   u8   slewrate;
   u8   slewrate_enable;
   u8   pitchrange;
+#if AOUT_NUM_CALI_POINTS_X > 0
+  u16  cali_point[AOUT_NUM_CALI_POINTS_X];
+#endif
 } aout_channel_t;
 
 
@@ -274,17 +278,6 @@ s32 AOUT_Init(u32 mode)
   // number of devices is 0 (changed during re-configuration)
   aout_num_devices = 0;
 
-#if AOUT_NUM_CALI_POINTS_X > 0
-  // reset calibration points
-  for(pin=0; pin<AOUT_NUM_CHANNELS; ++pin) {
-    int i;
-    for(i=0; i<AOUT_NUM_CALI_POINTS_X; ++i) {
-      u32 cali_value = i * AOUT_NUM_CALI_POINTS_Y_INTERVAL;
-      aout_config.cali_point[pin][i] = (cali_value < 0x10000) ? cali_value : 0xffff;
-    }
-  }
-#endif
-
   // set all AOUT pins to 0
   aout_channel_t *c = (aout_channel_t *)&aout_channel[0];
   for(pin=0; pin<AOUT_NUM_CHANNELS; ++pin, ++c) {
@@ -296,6 +289,17 @@ s32 AOUT_Init(u32 mode)
     c->slewrate_enable = 1;
     c->pitchrange = 2; // semitones
     c->pitch = 0; // pitch offset
+
+#if AOUT_NUM_CALI_POINTS_X > 0
+    {
+      // reset calibration points
+      int i;
+      for(i=0; i<AOUT_NUM_CALI_POINTS_X; ++i) {
+	u32 cali_value = i * AOUT_NUM_CALI_POINTS_Y_INTERVAL;
+	c->cali_point[i] = (cali_value < 0x10000) ? cali_value : 0xffff;
+      }
+    }
+#endif
   }
 
   // set all digital outputs to 0
@@ -490,6 +494,35 @@ const char* AOUT_IfNameGet(aout_if_t if_type)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// \return number of maximal supported channels depending on interface
+/////////////////////////////////////////////////////////////////////////////
+s32 AOUT_IF_MaxChannelsGet(aout_if_t if_type)
+{
+  switch( if_type ) {
+  case AOUT_IF_NONE:
+    return 0;
+
+  case AOUT_IF_MAX525:
+  case AOUT_IF_TLV5630:
+  case AOUT_IF_74HC595:
+    return AOUT_NUM_CHANNELS;
+
+  case AOUT_IF_MCP4922_1:
+  case AOUT_IF_MCP4922_2:
+    return 2;
+
+  case AOUT_IF_INTDAC:
+    return 2; // actually derivative dependent... TODO for MIOS32
+
+  default:
+    return AOUT_NUM_CHANNELS;
+  }
+
+  return AOUT_NUM_CHANNELS; // just to avoid warning
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
 //! Configures the AOUT driver.
 //!
 //! It is recommented to call AOUT_IF_Init() if a different AOUT interface type
@@ -618,6 +651,8 @@ u8 AOUT_CaliPinGet(void)
 s32 AOUT_CaliCfgValueSet(u16 value)
 {
   cali_cfg_value = value;
+  DEBUG_MSG("Cali_cfg: 0x%04x\n", value);
+  
   return 0; // no error
 }
 
@@ -679,6 +714,13 @@ static u16 caliValue(u8 pin)
   case AOUT_CALI_MODE_8V: return hz_v ? hz_v_table[0x48] : (0x60 << 9);
   }
 
+#if AOUT_NUM_CALI_POINTS_X > 0
+  if( aout_config.chn_hz_v & (1 << pin) ) {
+    u8 ix = (cali_cfg_value >> 9) / 12; // 0..11
+    return cali_hz_v_table[ix];
+  }
+#endif
+  
   return cali_cfg_value; // in case UI want's to configure calibration values
 }
 
@@ -803,13 +845,21 @@ static s32 currentValueGet(u8 pin)
       u8 debug = cali_mode != AOUT_CALI_MODE_OFF && cali_mode != AOUT_CALI_MODE_WAVE && pin == cali_pin;
 
       int i;
-      u16 *cali_value = &aout_config.cali_point[pin][0];
+      u16 *cali_value = &c->cali_point[0];
       for(i=0; i<(AOUT_NUM_CALI_POINTS_X-1); ++i) {
-	s32 x0 = i * AOUT_NUM_CALI_POINTS_Y_INTERVAL;
+	s32 x0, x1;
+	
+	if( aout_config.chn_hz_v & (1 << pin) ) {
+	  x0 = cali_hz_v_table[i];
+	  x1 = cali_hz_v_table[i+1];
+	} else {
+	  x0 = i * AOUT_NUM_CALI_POINTS_Y_INTERVAL;
+	  x1 = (i+1) * AOUT_NUM_CALI_POINTS_Y_INTERVAL;
+	}
+	
 	if( x0 > 0xffff )
 	  x0 = 0xffff;
 
-	s32 x1 = (i+1) * AOUT_NUM_CALI_POINTS_Y_INTERVAL;
 	if( x1 > 0xffff )
 	  x1 = 0xffff;
 
@@ -817,7 +867,11 @@ static s32 currentValueGet(u8 pin)
 	  s32 y0 = cali_value[i];
 	  s32 y1 = cali_value[i+1];
 	  s32 n = value - y0;
-	  u16 result = y0 + ((y1 - y0) * n) / (x1 - x0);
+	  u32 result = y0 + ((y1 - y0) * n) / (x1 - x0);
+	  if( result > 0xffff ) {
+	    result = 0xffff;
+	  }
+	    
 	  if( debug ) {
 #ifdef DEBUG_MSG
 	    DEBUG_MSG("value=%04x (with x0=%04x x1=%04x y0=%04x y1=%04x) -> result=%04x\n", value, x0, x1, y0, x1, result);
@@ -1104,7 +1158,7 @@ u16 *AOUT_CaliPointsPtrGet(u8 cv)
     return NULL; // pin not available
 
 #if AOUT_NUM_CALI_POINTS_X > 0
-  return &aout_config.cali_point[cv][0];
+  return &aout_channel[cv].cali_point[0];
 #else
   return NULL;
 #endif
@@ -1640,3 +1694,4 @@ s32 AOUT_TerminalPrintConfig(void *_output_function)
 
 
 //! \}
+#endif
